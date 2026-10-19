@@ -301,35 +301,46 @@ app.get('/api/schema', (req: Request, res: Response) => {
 // ============================================================================
 // Start Server with Vite or Static Middleware
 // ============================================================================
-async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
+export async function startServer() {
+  const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL;
 
   if (!isProd) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: process.env.DISABLE_HMR !== 'true' },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true, hmr: process.env.DISABLE_HMR !== 'true' },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (e) {
+      console.warn('Vite middleware skipped in serverless mode');
+    }
   } else {
     const distPath = path.resolve('dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get('*', (_req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`====================================================`);
-    console.log(`🚀 Baileys WhatsApp Server running on port ${PORT}`);
-    console.log(`📡 Broadcast API: POST http://localhost:${PORT}/send-broadcast`);
-    console.log(`====================================================`);
+  // Auto-initialize bot in the background
+  botManager.initialize().catch((err) => {
+    console.warn('[Server] Initial bot startup note:', err.message);
+  });
+}
 
-    // Auto-initialize bot in the background
-    botManager.initialize().catch((err) => {
-      console.warn('[Server] Initial bot startup note:', err.message);
+// Start if run directly
+if (process.argv[1] && process.argv[1].endsWith('server.ts')) {
+  startServer().then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`====================================================`);
+      console.log(`🚀 Baileys WhatsApp Server running on port ${PORT}`);
+      console.log(`📡 Broadcast API: POST http://localhost:${PORT}/send-broadcast`);
+      console.log(`====================================================`);
     });
   });
 }
 
-startServer();
+export default app;
