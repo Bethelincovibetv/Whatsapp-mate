@@ -282,6 +282,19 @@ app.post('/api/session/clear', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// Global JSON Error Handler Middleware
+// ============================================================================
+app.use((err: any, req: Request, res: Response, next: Function) => {
+  console.error('[Global Express Error]', err);
+  if (!res.headersSent) {
+    res.status(500).json({
+      success: false,
+      error: err.message || 'A server error occurred. Please try again.',
+    });
+  }
+});
+
+// ============================================================================
 // Schema & DDL Delivery
 // ============================================================================
 app.get('/api/schema', (req: Request, res: Response) => {
