@@ -1,0 +1,6 @@
+{
+  "name": "Baileys WhatsApp Auto-Tag & Cloud SQL Control Hub",
+  "description": "Production-ready WhatsApp automation backend powered by Baileys, PostgreSQL session storage for Google Cloud SQL, pairing code auth, and auto-tag everyone in groups.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
