@@ -26,6 +26,9 @@ import {
   Shield,
   HelpCircle,
   MessageSquare,
+  Globe,
+  Link2,
+  X,
 } from 'lucide-react';
 
 interface BotStatus {
@@ -163,82 +166,169 @@ export default function App() {
     setTimeout(() => setCopiedKey(null), 2500);
   };
 
+  // Backend URL configuration (useful when frontend is hosted on Vercel and backend runs on Cloud Run / Render)
+  const [backendUrl, setBackendUrl] = useState<string>(() => {
+    return localStorage.getItem('baileys_backend_url') || import.meta.env.VITE_BACKEND_URL || '';
+  });
+  const [showBackendModal, setShowBackendModal] = useState(false);
+  const [customUrlInput, setCustomUrlInput] = useState(backendUrl);
+  const [pingTestStatus, setPingTestStatus] = useState<{ testing: boolean; message: string | null; success?: boolean }>({ testing: false, message: null });
+
+  /**
+   * Universal, safe API Fetch wrapper that NEVER throws SyntaxError: Unexpected token
+   * Safely reads text, parses JSON with try/catch, and provides diagnostic context.
+   */
+  const safeApiFetch = async (path: string, options?: RequestInit): Promise<any> => {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const targetUrl = backendUrl ? `${backendUrl.replace(/\/+$/, '')}${cleanPath}` : cleanPath;
+
+    try {
+      const res = await fetch(targetUrl, options);
+      const rawText = await res.text();
+      let json: any = null;
+      try {
+        json = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        // Response was not JSON
+      }
+
+      if (json && typeof json === 'object') {
+        if (!res.ok && res.status !== 202) {
+          throw new Error(json.error || json.message || `Server responded with status ${res.status}`);
+        }
+        return json;
+      }
+
+      // Handle non-JSON HTML error pages from Vercel / serverless
+      if (rawText.includes('The page could not be found') || res.status === 404) {
+        throw new Error(
+          'Endpoint not found (404). If deployed on Vercel, please connect your persistent Cloud Run or Render backend in the header.'
+        );
+      }
+      if (rawText.includes('A server error') || res.status === 500) {
+        throw new Error(
+          'Vercel Serverless Function error (500). Baileys WhatsApp requires a persistent WebSocket backend. Connect your live Cloud Run URL in the header.'
+        );
+      }
+      if (!res.ok && res.status !== 202) {
+        const cleanMsg = rawText.replace(/<[^>]*>/g, '').trim().slice(0, 140);
+        throw new Error(cleanMsg || `Server responded with status ${res.status}`);
+      }
+
+      return { success: true, text: rawText };
+    } catch (err: any) {
+      throw new Error(err.message || 'Network communication error');
+    }
+  };
+
+  const testBackendConnection = async (urlToTest: string) => {
+    setPingTestStatus({ testing: true, message: 'Testing backend connection...' });
+    try {
+      const cleanUrl = urlToTest.trim().replace(/\/+$/, '');
+      const testPath = cleanUrl ? `${cleanUrl}/api/status` : '/api/status';
+      const startTime = Date.now();
+      const res = await fetch(testPath);
+      const latency = Date.now() - startTime;
+      const rawText = await res.text();
+      let d: any = null;
+      try {
+        d = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        // Not JSON
+      }
+
+      if (d && d.status) {
+        setPingTestStatus({
+          testing: false,
+          success: true,
+          message: `Connected successfully (${latency}ms)! Status: ${d.status.toUpperCase()} | Cloud SQL: ${d.isDatabaseConnected ? 'Active' : 'In-Memory Fallback'}`,
+        });
+      } else {
+        const cleanMsg = rawText.replace(/<[^>]*>/g, '').trim().slice(0, 100);
+        setPingTestStatus({
+          testing: false,
+          success: false,
+          message: `Server returned non-JSON (${res.status}): ${cleanMsg || 'Unknown response'}`,
+        });
+      }
+    } catch (e: any) {
+      setPingTestStatus({
+        testing: false,
+        success: false,
+        message: `Connection failed: ${e.message}`,
+      });
+    }
+  };
+
+  const saveBackendUrl = (newUrl: string) => {
+    const trimmed = newUrl.trim().replace(/\/+$/, '');
+    setBackendUrl(trimmed);
+    localStorage.setItem('baileys_backend_url', trimmed);
+    setShowBackendModal(false);
+    fetchStatus();
+    fetchLogs();
+    fetchQueue();
+    fetchAdmins();
+  };
+
   const fetchStatus = async () => {
     try {
-      const res = await fetch('/api/status');
-      if (res.ok) {
-        const data = await res.json();
+      const data = await safeApiFetch('/api/status');
+      if (data && data.status) {
         setStatus(data);
       }
     } catch (e) {
-      console.warn('Status error:', e);
+      console.warn('Status poll:', e);
     }
   };
 
   const fetchQueue = async () => {
     try {
-      const [resStats, resJobs] = await Promise.all([
-        fetch('/api/queue/stats'),
-        fetch('/api/queue/jobs'),
+      const [dStats, dJobs] = await Promise.all([
+        safeApiFetch('/api/queue/stats'),
+        safeApiFetch('/api/queue/jobs'),
       ]);
-      if (resStats.ok) {
-        const d = await resStats.json();
-        setQueueStats(d.stats);
-      }
-      if (resJobs.ok) {
-        const d = await resJobs.json();
-        setQueueJobs(d.jobs || []);
-      }
+      if (dStats?.stats) setQueueStats(dStats.stats);
+      if (dJobs?.jobs) setQueueJobs(dJobs.jobs);
     } catch (e) {
-      console.warn('Queue poll error:', e);
+      console.warn('Queue poll:', e);
     }
   };
 
   const fetchAdmins = async () => {
     try {
-      const res = await fetch('/api/admins');
-      if (res.ok) {
-        const data = await res.json();
-        setAdmins(data.admins || []);
-      }
+      const data = await safeApiFetch('/api/admins');
+      if (data?.admins) setAdmins(data.admins);
     } catch (e) {
-      console.warn('Admins error:', e);
+      console.warn('Admins poll:', e);
     }
   };
 
   const fetchLogs = async () => {
     try {
-      const res = await fetch('/api/logs');
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs || []);
-      }
+      const data = await safeApiFetch('/api/logs');
+      if (data?.logs) setLogs(data.logs);
     } catch (e) {
-      console.warn('Logs error:', e);
+      console.warn('Logs poll:', e);
     }
   };
 
   const fetchGroups = async () => {
     try {
-      const res = await fetch('/api/groups');
-      if (res.ok) {
-        const data = await res.json();
-        setGroups(data.groups || []);
-      }
+      const data = await safeApiFetch('/api/groups');
+      if (data?.groups) setGroups(data.groups);
     } catch (e) {
-      console.warn('Groups poll error:', e);
+      console.warn('Groups poll:', e);
     }
   };
 
   const fetchSchema = async () => {
     try {
-      const res = await fetch('/api/schema');
-      if (res.ok) {
-        const text = await res.text();
-        setSchemaText(text);
-      }
+      const data = await safeApiFetch('/api/schema');
+      if (typeof data === 'string') setSchemaText(data);
+      else if (data?.text) setSchemaText(data.text);
     } catch (e) {
-      console.warn('Schema fetch error:', e);
+      console.warn('Schema fetch:', e);
     }
   };
 
@@ -254,7 +344,7 @@ export default function App() {
       fetchQueue();
     }, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [backendUrl]);
 
   const handleRequestPairingCode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -265,18 +355,16 @@ export default function App() {
     setPairingLoading(true);
     setPairingError(null);
     try {
-      // Clean phone input and prepend country code (stripping leading zero if user typed e.g. 08012345678)
       const cleanLocal = phoneInput.replace(/[^0-9]/g, '').replace(/^0+/, '');
       const fullPhone = `${countryCode.replace(/[^0-9]/g, '')}${cleanLocal}`;
 
-      const res = await fetch('/api/pairing-code', {
+      const data = await safeApiFetch('/api/pairing-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber: fullPhone }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to request pairing code');
+      if (!data?.success) {
+        throw new Error(data?.error || 'Failed to request pairing code');
       }
       fetchStatus();
       fetchLogs();
@@ -297,7 +385,7 @@ export default function App() {
     setBroadcastError(null);
     setBroadcastResponse(null);
     try {
-      const res = await fetch('/send-broadcast', {
+      const data = await safeApiFetch('/send-broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -306,10 +394,6 @@ export default function App() {
           senderJid: broadcastSender.trim() || undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok && res.status !== 202) {
-        throw new Error(data.error || 'Failed to queue broadcast');
-      }
       setBroadcastResponse(data);
       fetchQueue();
       fetchLogs();
@@ -325,7 +409,7 @@ export default function App() {
     if (!newAdminPhone) return;
     setAdminActionLoading(true);
     try {
-      const res = await fetch('/api/admins', {
+      await safeApiFetch('/api/admins', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -334,13 +418,11 @@ export default function App() {
           role: newAdminRole,
         }),
       });
-      if (res.ok) {
-        setNewAdminPhone('');
-        setNewAdminName('');
-        fetchAdmins();
-        fetchLogs();
-      }
-    } catch (err) {
+      setNewAdminPhone('');
+      setNewAdminName('');
+      fetchAdmins();
+      fetchLogs();
+    } catch (err: any) {
       console.error(err);
     } finally {
       setAdminActionLoading(false);
@@ -350,7 +432,7 @@ export default function App() {
   const handleDeleteAdmin = async (jid: string) => {
     if (!confirm(`Revoke admin privileges for ${jid}?`)) return;
     try {
-      await fetch(`/api/admins/${encodeURIComponent(jid)}`, { method: 'DELETE' });
+      await safeApiFetch(`/api/admins/${encodeURIComponent(jid)}`, { method: 'DELETE' });
       fetchAdmins();
       fetchLogs();
     } catch (err) {
@@ -360,7 +442,7 @@ export default function App() {
 
   const handleRetryJob = async (jobId: string) => {
     try {
-      await fetch(`/api/queue/retry/${jobId}`, { method: 'POST' });
+      await safeApiFetch(`/api/queue/retry/${jobId}`, { method: 'POST' });
       fetchQueue();
       fetchLogs();
     } catch (err) {
@@ -370,7 +452,7 @@ export default function App() {
 
   const handleSaveSettings = async () => {
     try {
-      const res = await fetch('/api/settings', {
+      await safeApiFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -381,11 +463,9 @@ export default function App() {
           mentionFormat,
         }),
       });
-      if (res.ok) {
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 3000);
-        fetchStatus();
-      }
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+      fetchStatus();
     } catch (err) {
       console.error(err);
     }
@@ -396,7 +476,7 @@ export default function App() {
       return;
     }
     try {
-      await fetch('/api/session/clear', { method: 'POST' });
+      await safeApiFetch('/api/session/clear', { method: 'POST' });
       fetchStatus();
       fetchLogs();
     } catch (e) {
@@ -458,10 +538,27 @@ export default function App() {
               </span>
             </div>
 
+            {/* Backend URL & Credentials Hub Button */}
+            <button
+              onClick={() => {
+                setCustomUrlInput(backendUrl);
+                setShowBackendModal(true);
+              }}
+              className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-indigo-300 text-xs font-medium transition-colors cursor-pointer"
+              title="Configure Backend Connection URL & Credentials"
+            >
+              <Globe className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden md:inline text-slate-300">Backend:</span>
+              <span className="font-mono text-white text-[11px] max-w-[140px] truncate">
+                {backendUrl ? backendUrl.replace(/^https?:\/\//, '') : 'Same Origin (/api)'}
+              </span>
+              <span className={`w-1.5 h-1.5 rounded-full ${status ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            </button>
+
             {/* Refresh */}
             <button
               onClick={() => { fetchStatus(); fetchLogs(); fetchQueue(); fetchAdmins(); }}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors border border-slate-700"
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors border border-slate-700 cursor-pointer"
               title="Refresh All"
             >
               <RefreshCw className="w-4 h-4" />
@@ -1005,9 +1102,30 @@ export default function App() {
                     </div>
 
                     {pairingError && (
-                      <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs flex items-center space-x-2">
-                        <AlertCircle className="w-4 h-4 shrink-0" />
-                        <span>{pairingError}</span>
+                      <div className="p-4 rounded-xl bg-rose-950/50 border border-rose-500/40 text-rose-300 text-xs space-y-2.5">
+                        <div className="flex items-start space-x-2.5">
+                          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                          <div>
+                            <span className="font-semibold text-rose-200 block">Connection / Pairing Notice:</span>
+                            <span className="text-rose-300/90 leading-relaxed block mt-0.5">{pairingError}</span>
+                          </div>
+                        </div>
+                        <div className="pt-2 border-t border-rose-900/40 flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] text-rose-400/80">
+                            Deploying on Vercel? WhatsApp sockets need a persistent backend.
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomUrlInput(backendUrl);
+                              setShowBackendModal(true);
+                            }}
+                            className="px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40 font-medium text-xs transition-colors cursor-pointer flex items-center space-x-1.5"
+                          >
+                            <Globe className="w-3.5 h-3.5" />
+                            <span>Connect Backend Server</span>
+                          </button>
+                        </div>
                       </div>
                     )}
 
@@ -1452,9 +1570,222 @@ export default function App() {
         )}
       </main>
 
-      <footer className="border-t border-slate-800/80 bg-slate-900/40 py-4 px-6 text-center text-xs text-slate-500">
-        Baileys WhatsApp Auto-Tag • BullMQ Message Queue • PostgreSQL RBAC Hub
-      </footer>
+      {/* Backend Connection & Cloud SQL Credentials Modal */}
+      {showBackendModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl p-6 relative text-slate-200">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  <Globe className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Backend Connection &amp; Cloud SQL Credentials</h3>
+                  <p className="text-xs text-slate-400">Configure remote server endpoints and verify database synchronization</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBackendModal(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Current Status Overview */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 my-4">
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Active URL</span>
+                <p className="font-mono text-xs text-indigo-300 font-semibold truncate mt-1">
+                  {backendUrl || 'Same Origin (/api)'}
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">WhatsApp Socket</span>
+                <p className="text-xs font-semibold capitalize text-emerald-400 mt-1 flex items-center space-x-1.5">
+                  <span className={`w-2 h-2 rounded-full ${status?.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                  <span>{status?.status || 'Connecting...'}</span>
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Cloud SQL State</span>
+                <p className="text-xs font-semibold text-cyan-300 mt-1">
+                  {status?.isDatabaseConnected ? 'PostgreSQL Active' : 'In-Memory Fallback'}
+                </p>
+              </div>
+            </div>
+
+            {/* Input & Test Controls */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
+                  Persistent Backend Server URL
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={customUrlInput}
+                    onChange={(e) => setCustomUrlInput(e.target.value)}
+                    placeholder="https://your-cloud-run-service.run.app (or leave empty for relative /api)"
+                    className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white font-mono placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={pingTestStatus.testing}
+                    onClick={() => testBackendConnection(customUrlInput)}
+                    className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition-colors shrink-0 flex items-center justify-center space-x-1.5 disabled:opacity-50 cursor-pointer"
+                  >
+                    {pingTestStatus.testing ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Zap className="w-3.5 h-3.5" />
+                    )}
+                    <span>Test Ping</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Ping Test Result Banner */}
+              {pingTestStatus.message && (
+                <div className={`p-3 rounded-xl text-xs flex items-center space-x-2 border ${
+                  pingTestStatus.success
+                    ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-200'
+                    : 'bg-rose-950/50 border-rose-500/40 text-rose-200'
+                }`}>
+                  {pingTestStatus.success ? (
+                    <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span className="font-mono">{pingTestStatus.message}</span>
+                </div>
+              )}
+
+              {/* Quick Presets */}
+              <div>
+                <span className="block text-xs text-slate-400 mb-1.5 font-medium">Quick Presets:</span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = 'https://ais-dev-kpjvnrrlc5ogpbuwfvnsj5-468433224078.europe-west2.run.app';
+                      setCustomUrlInput(url);
+                      testBackendConnection(url);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700 transition-colors flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <Server className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Cloud Run Instance (Europe West)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = 'http://localhost:3000';
+                      setCustomUrlInput(url);
+                      testBackendConnection(url);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700 transition-colors flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Localhost (Port 3000)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomUrlInput('');
+                      testBackendConnection('');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700 transition-colors flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <Globe className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Same Origin / Vercel (/api)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Vercel Environment Variables Guide */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-2">
+                <div className="flex items-center space-x-2 text-indigo-300 font-semibold">
+                  <Info className="w-4 h-4 text-indigo-400" />
+                  <span>Permanent Vercel Frontend Connection</span>
+                </div>
+                <p className="text-slate-400 text-[11px] leading-relaxed">
+                  To permanently connect your frontend on Vercel to your persistent Cloud Run backend without needing to re-enter this URL in every browser:
+                </p>
+                <div className="bg-slate-900 p-2.5 rounded-lg font-mono text-[11px] text-slate-200 border border-slate-800 space-y-1">
+                  <div>1. Go to <strong>Vercel Dashboard &gt; Project &gt; Settings &gt; Environment Variables</strong></div>
+                  <div>2. Add Key: <code className="text-emerald-400">VITE_BACKEND_URL</code></div>
+                  <div>3. Add Value: <code className="text-cyan-300">{customUrlInput || 'https://ais-dev-kpjvnrrlc5ogpbuwfvnsj5-468433224078.europe-west2.run.app'}</code></div>
+                  <div>4. Redeploy project on Vercel.</div>
+                </div>
+              </div>
+
+              {/* Cloud SQL PostgreSQL Variables Reference */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-2">
+                <div className="flex items-center space-x-2 text-cyan-300 font-semibold">
+                  <Database className="w-4 h-4 text-cyan-400" />
+                  <span>Google Cloud SQL (PostgreSQL) Configuration Reference</span>
+                </div>
+                <p className="text-slate-400 text-[11px]">
+                  Configured on Cloud Run container for 100% session persistence across redeployments:
+                </p>
+                <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+                  <div className="p-2 bg-slate-900 rounded border border-slate-800">
+                    <span className="text-slate-500 block text-[10px]">SESSION_ID</span>
+                    <span className="text-white">cloudsql_baileys_session</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded border border-slate-800">
+                    <span className="text-slate-500 block text-[10px]">TABLE</span>
+                    <span className="text-white">baileys_sessions</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded border border-slate-800">
+                    <span className="text-slate-500 block text-[10px]">RBAC TABLE</span>
+                    <span className="text-white">bot_admins</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 rounded border border-slate-800">
+                    <span className="text-slate-500 block text-[10px]">MIN INSTANCES</span>
+                    <span className="text-emerald-400">1 (Keeps WebSocket alive)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="mt-6 pt-4 border-t border-slate-800 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => saveBackendUrl('')}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition-colors cursor-pointer"
+              >
+                Reset to Default
+              </button>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBackendModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveBackendUrl(customUrlInput)}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-lg shadow-emerald-600/20 transition-all flex items-center space-x-1.5 cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Save &amp; Connect</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -10,8 +10,8 @@
       "destination": "/api/index.ts"
     },
     {
-      "source": "/((?!api/).*)",
-      "destination": "/dist/index.html"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }

@@ -28,7 +28,7 @@ app.use(express.json());
 // ============================================================================
 // Core Automation Endpoint: POST /send-broadcast (Queue-Backed)
 // ============================================================================
-app.post('/send-broadcast', async (req: Request, res: Response): Promise<void> => {
+app.post(['/send-broadcast', '/api/send-broadcast'], async (req: Request, res: Response): Promise<void> => {
   try {
     const { groupJid, message, senderJid } = req.body;
 
@@ -82,41 +82,20 @@ app.post('/send-broadcast', async (req: Request, res: Response): Promise<void> =
   }
 });
 
-// Also alias under /api/send-broadcast for frontend SPA convenience
-app.post('/api/send-broadcast', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { groupJid, message, senderJid } = req.body;
-    if (!groupJid || !message) {
-      res.status(400).json({ success: false, error: 'Both groupJid and message are required.' });
-      return;
-    }
-    const queueResult = await botManager.sendBroadcast(groupJid, message.trim(), senderJid);
-    res.status(202).json({
-      success: true,
-      jobId: queueResult.jobId,
-      queueEngine: queueResult.mode,
-      groupJid: queueResult.groupJid,
-      status: 'queued',
-    });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // ============================================================================
 // Message Queue Endpoints (BullMQ / In-Memory Worker)
 // ============================================================================
-app.get('/api/queue/stats', (_req: Request, res: Response) => {
+app.get(['/api/queue/stats', '/queue/stats'], (_req: Request, res: Response) => {
   const stats = broadcastQueue.getStats();
   res.json({ success: true, stats });
 });
 
-app.get('/api/queue/jobs', (_req: Request, res: Response) => {
+app.get(['/api/queue/jobs', '/queue/jobs'], (_req: Request, res: Response) => {
   const jobs = broadcastQueue.getJobs();
   res.json({ success: true, count: jobs.length, jobs });
 });
 
-app.post('/api/queue/retry/:id', (req: Request, res: Response) => {
+app.post(['/api/queue/retry/:id', '/queue/retry/:id'], (req: Request, res: Response) => {
   const retried = broadcastQueue.retryJob(req.params.id);
   if (retried) {
     res.json({ success: true, message: `Job ${req.params.id} re-enqueued for delivery.` });
@@ -128,7 +107,7 @@ app.post('/api/queue/retry/:id', (req: Request, res: Response) => {
 // ============================================================================
 // Administrator Role Management Endpoints (PostgreSQL)
 // ============================================================================
-app.get('/api/admins', async (_req: Request, res: Response) => {
+app.get(['/api/admins', '/admins'], async (_req: Request, res: Response) => {
   try {
     const admins = await adminManager.getAdmins();
     res.json({ success: true, count: admins.length, admins });
@@ -137,7 +116,7 @@ app.get('/api/admins', async (_req: Request, res: Response) => {
   }
 });
 
-app.post('/api/admins', async (req: Request, res: Response) => {
+app.post(['/api/admins', '/admins'], async (req: Request, res: Response) => {
   try {
     const { jid, name, role, addedBy, canBroadcast, canTagall, canManageAdmins } = req.body;
     if (!jid) {
@@ -159,7 +138,7 @@ app.post('/api/admins', async (req: Request, res: Response) => {
   }
 });
 
-app.delete('/api/admins/:jid', async (req: Request, res: Response) => {
+app.delete(['/api/admins/:jid', '/admins/:jid'], async (req: Request, res: Response) => {
   try {
     const removed = await adminManager.removeAdmin(req.params.jid);
     if (removed) {
@@ -172,7 +151,7 @@ app.delete('/api/admins/:jid', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/admins/check/:jid', async (req: Request, res: Response) => {
+app.get(['/api/admins/check/:jid', '/admins/check/:jid'], async (req: Request, res: Response) => {
   try {
     const isAdmin = await adminManager.isAdmin(req.params.jid);
     const admin = await adminManager.getAdmin(req.params.jid);
@@ -185,7 +164,7 @@ app.get('/api/admins/check/:jid', async (req: Request, res: Response) => {
 // ============================================================================
 // Status & Health Check
 // ============================================================================
-app.get('/api/status', (req: Request, res: Response) => {
+app.get(['/api/status', '/status'], (req: Request, res: Response) => {
   const status = botManager.getStatus();
   res.json(status);
 });
@@ -193,13 +172,13 @@ app.get('/api/status', (req: Request, res: Response) => {
 // ============================================================================
 // Request Pairing Code
 // ============================================================================
-app.post('/api/pairing-code', async (req: Request, res: Response): Promise<void> => {
+app.post(['/api/pairing-code', '/pairing-code'], async (req: Request, res: Response): Promise<void> => {
   try {
     const { phoneNumber } = req.body;
     if (!phoneNumber) {
       res.status(400).json({
         success: false,
-        error: 'Please provide a valid phoneNumber with country code (e.g., 14155552671).',
+        error: 'Please provide a valid phoneNumber with country code (e.g., 2348012345678).',
       });
       return;
     }
@@ -222,7 +201,7 @@ app.post('/api/pairing-code', async (req: Request, res: Response): Promise<void>
 // ============================================================================
 // Groups Explorer
 // ============================================================================
-app.get('/api/groups', async (req: Request, res: Response) => {
+app.get(['/api/groups', '/groups'], async (req: Request, res: Response) => {
   try {
     const groups = await botManager.getGroups();
     res.json({ success: true, count: groups.length, groups });
@@ -234,7 +213,7 @@ app.get('/api/groups', async (req: Request, res: Response) => {
 // ============================================================================
 // Activity Logs
 // ============================================================================
-app.get('/api/logs', (req: Request, res: Response) => {
+app.get(['/api/logs', '/logs'], (req: Request, res: Response) => {
   const logs = botManager.getLogs();
   res.json({ success: true, count: logs.length, logs });
 });
@@ -242,7 +221,7 @@ app.get('/api/logs', (req: Request, res: Response) => {
 // ============================================================================
 // Automation Settings Update
 // ============================================================================
-app.post('/api/settings', (req: Request, res: Response) => {
+app.post(['/api/settings', '/settings'], (req: Request, res: Response) => {
   try {
     const { autoTagEnabled, autoTagTrigger, autoTagKeyword, cooldownSeconds, mentionFormat } = req.body;
 
@@ -255,7 +234,7 @@ app.post('/api/settings', (req: Request, res: Response) => {
     if (typeof autoTagKeyword === 'string') {
       botManager.config.autoTagKeyword = autoTagKeyword;
     }
-    if (typeof cooldownSeconds === 'number' && cooldownSeconds >= 1) {
+    if (typeof cooldownSeconds === 'number') {
       botManager.config.cooldownSeconds = cooldownSeconds;
     }
     if (mentionFormat === 'standard' || mentionFormat === 'compact' || mentionFormat === 'announcement') {
@@ -272,12 +251,29 @@ app.post('/api/settings', (req: Request, res: Response) => {
 // ============================================================================
 // Disconnect / Clear Session
 // ============================================================================
-app.post('/api/session/clear', async (req: Request, res: Response) => {
+app.post(['/api/session/clear', '/session/clear'], async (req: Request, res: Response) => {
   try {
     await botManager.logoutAndReset();
     res.json({ success: true, message: 'WhatsApp session cleared and disconnected.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================================
+// Schema & DDL Delivery
+// ============================================================================
+app.get(['/api/schema', '/schema'], (req: Request, res: Response) => {
+  try {
+    const schemaPath = path.resolve('schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      const ddl = fs.readFileSync(schemaPath, 'utf-8');
+      res.type('text/plain').send(ddl);
+    } else {
+      res.status(404).send('schema.sql not found');
+    }
+  } catch (err: any) {
+    res.status(500).send(err.message);
   }
 });
 

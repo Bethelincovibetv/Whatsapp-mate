@@ -234,34 +234,29 @@ export class WhatsAppBotManager {
 
     this.pairingPhone = cleanPhone;
 
-    // If socket exists but is closed or needs reset, clean up first
-    if (this.sock) {
-      try {
-        this.sock.end(undefined);
-      } catch {}
-      this.sock = null;
+    // Initialize socket if not already open
+    if (!this.sock) {
+      await this.initialize(cleanPhone);
     }
 
-    await this.initialize(cleanPhone);
-
-    // Wait for socket to establish connection handshake (up to 5 seconds)
+    // Quick wait for socket readiness (at most 1000ms)
     let attempts = 0;
-    while ((!this.sock || !(this.sock as any).requestPairingCode) && attempts < 15) {
-      await new Promise((r) => setTimeout(r, 400));
+    while ((!this.sock || !(this.sock as any).requestPairingCode) && attempts < 5) {
+      await new Promise((r) => setTimeout(r, 200));
       attempts++;
     }
 
-    if (!this.sock) {
-      throw new Error('WhatsApp socket could not be established to request pairing code');
+    if (!this.sock || !(this.sock as any).requestPairingCode) {
+      throw new Error('WhatsApp socket could not be initialized. Please try again.');
     }
 
-    // Give socket 1.5 seconds to open WebSocket connection before calling requestPairingCode
-    await new Promise((r) => setTimeout(r, 1500));
+    // Brief 500ms delay to allow socket websocket handshake
+    await new Promise((r) => setTimeout(r, 500));
 
     let lastError: any = null;
-    for (let retry = 1; retry <= 3; retry++) {
+    for (let retry = 1; retry <= 2; retry++) {
       try {
-        this.addLog('info', `Requesting WhatsApp pairing code for +${cleanPhone} (Attempt ${retry}/3)...`);
+        this.addLog('info', `Requesting WhatsApp pairing code for +${cleanPhone} (Attempt ${retry}/2)...`);
         const code = await (this.sock as any).requestPairingCode(cleanPhone);
         const formatted = code?.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
         this.pairingCode = formatted;
@@ -273,11 +268,13 @@ export class WhatsAppBotManager {
       } catch (err: any) {
         lastError = err;
         this.addLog('error', `Pairing code attempt ${retry} failed: ${err.message}`);
-        await new Promise((r) => setTimeout(r, 2000));
+        if (retry < 2) {
+          await new Promise((r) => setTimeout(r, 800));
+        }
       }
     }
 
-    throw new Error(`Failed to request pairing code after 3 attempts: ${lastError?.message || 'Connection closed'}`);
+    throw new Error(`Failed to request pairing code: ${lastError?.message || 'Connection timed out'}`);
   }
 
   /**

@@ -146,3 +146,33 @@ Response:
 }
 ```
 All 48 group members will receive an announcement quoting your text and tagging their handles!
+
+---
+
+## Step 6: Deploying the Frontend Dashboard on Vercel
+
+If you deploy the dashboard on **Vercel** (`https://your-app.vercel.app`):
+
+### 1. The Architecture
+- **Persistent Backend (Google Cloud Run / Render / VPS)**: Runs the active Baileys process, maintains the continuous WhatsApp WebSocket (`wss://web.whatsapp.com/ws/chat`), executes message queue background workers, and connects to Cloud SQL PostgreSQL.
+- **Frontend Dashboard (Vercel)**: Fast global CDN hosting for the React UI.
+
+### 2. Connect Vercel to Your Backend
+In your **Vercel Project Dashboard**:
+1. Go to **Settings > Environment Variables**.
+2. Add a new variable:
+   - **Key**: `VITE_BACKEND_URL`
+   - **Value**: `https://your-cloud-run-service.run.app` (e.g. `https://ais-dev-kpjvnrrlc5ogpbuwfvnsj5-468433224078.europe-west2.run.app`)
+3. Redeploy your project.
+
+### 3. In-App Backend Switcher
+You can also connect or switch backend URLs anytime directly in the app UI:
+1. Click the **"Backend: ..."** button in the top navigation bar.
+2. Enter your backend URL (or click the **Cloud Run** quick preset).
+3. Click **"Test Ping"** to verify latency and database connectivity.
+4. Click **"Save & Connect"**. The frontend saves it to `localStorage` and reconnects instantly!
+
+### 4. Rewrites & Serverless (`vercel.json`)
+The included `vercel.json` and `api/index.ts` are pre-configured:
+- SPA client-side routes rewrite cleanly to `/index.html`.
+- Any `/api/*` or `/send-broadcast` requests route through `/api/index.ts`, which automatically proxies requests to `VITE_BACKEND_URL` if set, preventing CORS errors and returning pure JSON without HTML error screens.
